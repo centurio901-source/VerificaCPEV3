@@ -85,7 +85,7 @@ with st.sidebar:
     """, unsafe_allow_html=True)
     st.markdown("---")
 
-        
+
 # ==============================================================================
 # CONFIGURACIÓN STREAMLIT
 # ==============================================================================
@@ -97,7 +97,7 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# ÍNDICES DEL TXT SIRE COMPRAS
+# ÍNDICES DEL TXT / EXCEL SIRE COMPRAS
 # ==============================================================================
 
 IDX_FECHA_EMISION = 5 - 1
@@ -490,7 +490,7 @@ class ValidadorSUNAT:
 
 
     # ==========================================================================
-    # PROCESAR TXT SIRE
+    # PROCESAR TXT / EXCEL SIRE
     # ==========================================================================
 
     def procesar_txt(self, archivo):
@@ -504,38 +504,323 @@ class ValidadorSUNAT:
 
 
         # --------------------------------------------------------------
-        # LEER ARCHIVO
+        # LEER ARCHIVO TXT O EXCEL
         # --------------------------------------------------------------
 
-        contenido = archivo.getvalue()
+        nombre_archivo = archivo.name.lower()
 
-        lineas = None
+        # ==============================================================
+        # EXCEL
+        # ==============================================================
 
-        for encoding in [
-            "utf-8-sig",
-            "utf-8",
-            "cp1252",
-            "latin-1"
-        ]:
+        if nombre_archivo.endswith(".xlsx"):
 
             try:
 
-                lineas = contenido.decode(
-                    encoding
-                ).splitlines()
+                df_excel = pd.read_excel(
+                    archivo,
+                    header=0,
+                    dtype=object
+                )
 
-                break
+            except Exception as e:
 
-            except UnicodeDecodeError:
-                continue
+                return {
+                    "error": (
+                        "No se pudo leer el archivo Excel.\n\n"
+                        f"Detalle: {str(e)}"
+                    )
+                }
 
 
-        if lineas is None:
+            # ----------------------------------------------------------
+            # VALIDAR CANTIDAD DE COLUMNAS
+            # ----------------------------------------------------------
+
+            if len(df_excel.columns) < len(
+                NOMBRES_COLUMNAS_SIRE
+            ):
+
+                return {
+                    "error": (
+                        "El archivo Excel no contiene "
+                        "las 27 columnas esperadas del SIRE Compras."
+                    )
+                }
+
+
+            # ----------------------------------------------------------
+            # CONVERTIR EXCEL A LA MISMA ESTRUCTURA DEL TXT
+            # ----------------------------------------------------------
+
+            lineas = []
+
+
+            for _, fila_excel in df_excel.iterrows():
+
+                campos = []
+
+
+                for i in range(
+                    len(NOMBRES_COLUMNAS_SIRE)
+                ):
+
+                    valor = fila_excel.iloc[i]
+
+
+                    # --------------------------------------------------
+                    # CELDAS VACÍAS
+                    # --------------------------------------------------
+
+                    if pd.isna(valor):
+
+                        valor = ""
+
+
+                    else:
+
+                        # ==============================================
+                        # FECHA
+                        # ==============================================
+
+                        if i == IDX_FECHA_EMISION:
+
+                            try:
+
+                                if isinstance(
+                                    valor,
+                                    (datetime, pd.Timestamp)
+                                ):
+
+                                    valor = valor.strftime(
+                                        "%d/%m/%Y"
+                                    )
+
+                                else:
+
+                                    fecha_excel = pd.to_datetime(
+                                        str(valor),
+                                        errors="coerce",
+                                        dayfirst=True
+                                    )
+
+                                    if not pd.isna(fecha_excel):
+
+                                        valor = fecha_excel.strftime(
+                                            "%d/%m/%Y"
+                                        )
+
+                            except Exception:
+
+                                valor = str(valor).strip()
+
+
+                        # ==============================================
+                        # NÚMERO DE COMPROBANTE
+                        # ==============================================
+
+                        elif i == IDX_NUMERO:
+
+                            try:
+
+                                texto_numero = str(
+                                    valor
+                                ).strip()
+
+                                numero_float = float(
+                                    texto_numero
+                                )
+
+                                if numero_float.is_integer():
+
+                                    valor = str(
+                                        int(numero_float)
+                                    )
+
+                                else:
+
+                                    valor = texto_numero
+
+                            except Exception:
+
+                                valor = str(valor).strip()
+
+
+                        # ==============================================
+                        # RUC DEL PROVEEDOR
+                        # ==============================================
+
+                        elif i == IDX_RUC_PROV:
+
+                            try:
+
+                                texto_ruc = str(
+                                    valor
+                                ).strip()
+
+                                # Evitar valores como:
+                                # 20123456789.0
+
+                                if texto_ruc.endswith(".0"):
+
+                                    texto_ruc = texto_ruc[:-2]
+
+
+                                # Manejar eventualmente
+                                # notación científica
+
+                                if (
+                                    "E" in texto_ruc.upper()
+                                    or "." in texto_ruc
+                                ):
+
+                                    numero_ruc = float(
+                                        texto_ruc
+                                    )
+
+                                    if numero_ruc.is_integer():
+
+                                        texto_ruc = str(
+                                            int(numero_ruc)
+                                        )
+
+
+                                valor = texto_ruc
+
+                            except Exception:
+
+                                valor = str(valor).strip()
+
+
+                        # ==============================================
+                        # MONTO TOTAL
+                        # ==============================================
+
+                        elif i == IDX_MONTO_TOTAL:
+
+                            try:
+
+                                if isinstance(
+                                    valor,
+                                    (int, float)
+                                ):
+
+                                    valor = f"{float(valor):.2f}"
+
+                                else:
+
+                                    texto_monto = str(
+                                        valor
+                                    ).strip()
+
+                                    # Formato 1.500,50
+                                    if (
+                                        "," in texto_monto
+                                        and "." in texto_monto
+                                        and texto_monto.rfind(",")
+                                        > texto_monto.rfind(".")
+                                    ):
+
+                                        texto_monto = (
+                                            texto_monto
+                                            .replace(".", "")
+                                            .replace(",", ".")
+                                        )
+
+                                    # Formato 1500,50
+                                    elif "," in texto_monto:
+
+                                        texto_monto = (
+                                            texto_monto
+                                            .replace(",", ".")
+                                        )
+
+                                    valor = f"{float(texto_monto):.2f}"
+
+                            except Exception:
+
+                                valor = str(valor).strip()
+
+
+                        # ==============================================
+                        # RESTO DE CAMPOS
+                        # ==============================================
+
+                        else:
+
+                            valor = str(
+                                valor
+                            ).strip()
+
+
+                    campos.append(
+                        str(valor)
+                    )
+
+
+                # ------------------------------------------------------
+                # Convertir fila Excel a la misma estructura del TXT
+                # ------------------------------------------------------
+
+                lineas.append(
+                    "|".join(campos)
+                )
+
+
+        # ==============================================================
+        # TXT
+        # ==============================================================
+
+        elif nombre_archivo.endswith(".txt"):
+
+            contenido = archivo.getvalue()
+
+            lineas = None
+
+            for encoding in [
+                "utf-8-sig",
+                "utf-8",
+                "cp1252",
+                "latin-1"
+            ]:
+
+                try:
+
+                    lineas = contenido.decode(
+                        encoding
+                    ).splitlines()
+
+                    break
+
+                except UnicodeDecodeError:
+
+                    continue
+
+
+            if lineas is None:
+
+                return {
+                    "error": "No se pudo leer el archivo TXT."
+                }
+
+
+        # ==============================================================
+        # FORMATO NO PERMITIDO
+        # ==============================================================
+
+        else:
 
             return {
-                "error": "No se pudo leer el archivo TXT."
+                "error": (
+                    "Formato de archivo no permitido. "
+                    "Utilice TXT o Excel (.xlsx)."
+                )
             }
 
+
+        # --------------------------------------------------------------
+        # ÍNDICE MÁXIMO NECESARIO
+        # --------------------------------------------------------------
 
         max_idx = max(
             IDX_FECHA_EMISION,
@@ -956,8 +1241,8 @@ with st.sidebar:
 # ==============================================================================
 
 archivo = st.file_uploader(
-    "📂 Cargue el TXT oficial del SIRE Compras",
-    type=["txt"]
+    "📂 Cargue el TXT oficial del SIRE Compras o archivo Excel",
+    type=["txt", "xlsx"]
 )
 
 
@@ -1117,6 +1402,7 @@ if archivo is not None:
         buffer = io.BytesIO()
 
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+
             df.to_excel(
                 writer,
                 index=False,
